@@ -17,6 +17,9 @@ import inspect
 import base64
 import re
 
+# Configuração para usar GPU CUDA
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # Usar a primeira GPU disponível
+
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -62,6 +65,11 @@ async def process_file(
         # Configurar opções de pipeline para PDF com configurações mais completas
         pipeline_options = PdfPipelineOptions()
         
+        # Configurar para usar GPU/CUDA
+        if hasattr(pipeline_options, "device"):
+            pipeline_options.device = "cuda"
+            logger.info("Configurado para usar GPU CUDA")
+        
         # Configurar OCR se solicitado
         if ocr:
             logger.info(f"Ativando OCR com idioma: {ocr_language}")
@@ -85,6 +93,10 @@ async def process_file(
                 # Ajustar confiança mínima
                 if hasattr(pipeline_options.ocr_options, "min_confidence"):
                     pipeline_options.ocr_options.min_confidence = 0.5
+                
+                # Configurar OCR para usar GPU
+                if hasattr(pipeline_options.ocr_options, "device"):
+                    pipeline_options.ocr_options.device = "cuda"
             except AttributeError as e:
                 logger.warning(f"Erro ao configurar opções específicas de OCR: {e}")
         else:
@@ -165,6 +177,10 @@ async def process_file(
                     generation_config={"max_new_tokens": 200, "do_sample": False}
                 )
                 logger.info("Usando modelo VLM interno do Docling para descrição de imagens")
+                
+                # Configurar modelo VLM para usar GPU
+                if hasattr(pipeline_options.picture_description_options, "device"):
+                    pipeline_options.picture_description_options.device = "cuda"
         
         # Criar conversor com as opções configuradas
         doc_converter = DocumentConverter(
