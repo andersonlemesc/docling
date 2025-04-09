@@ -1,0 +1,32 @@
+# Ambientes virtuais e cache
+.venv/
+__pycache__/
+*.pyc
+
+# Arquivos grandes e temporários
+*.pdf
+*.zip
+*.tar
+*.tar.gz
+*.log
+*.tmp
+*.bak
+
+# Configurações de sistema/IDE
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Git e repositórios
+.git/
+.gitignore
+
+# Node/npm (caso use no mesmo projeto)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Arquivos de output que não precisam estar na imagem
+resultado.md
+output/
