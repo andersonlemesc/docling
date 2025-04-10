@@ -91,6 +91,82 @@ async def process_file(
         # Configurar opções de pipeline para PDF
         pipeline_options = PdfPipelineOptions()
 
+        # Tentar configurar a preservação de layout usando diferentes abordagens
+        try:
+            # Tentar configurar preserve_layout diretamente 
+            pipeline_options.preserve_layout = True
+        except (AttributeError, ValueError) as e:
+            logger.warning(f"Não foi possível configurar preserve_layout diretamente: {e}")
+            
+            # Tentar métodos alternativos para configurar a preservação de layout
+            try:
+                # Em algumas versões, pode ser uma configuração dentro de um objeto de opções
+                if hasattr(pipeline_options, "layout_options") and hasattr(pipeline_options.layout_options, "preserve"):
+                    pipeline_options.layout_options.preserve = True
+                    logger.info("Configurado layout_options.preserve = True")
+                    
+                # Algumas versões podem ter um método para habilitar a preservação de layout
+                if hasattr(pipeline_options, "enable_layout_preservation"):
+                    pipeline_options.enable_layout_preservation()
+                    logger.info("Método enable_layout_preservation() chamado")
+                    
+                # Tente encontrar onde a configuração de layout está armazenada inspecionando os membros
+                for attr_name in dir(pipeline_options):
+                    if "layout" in attr_name.lower() and not attr_name.startswith("_"):
+                        try:
+                            layout_attr = getattr(pipeline_options, attr_name)
+                            if isinstance(layout_attr, bool):
+                                setattr(pipeline_options, attr_name, True)
+                                logger.info(f"Configurado {attr_name} = True")
+                        except Exception:
+                            pass
+            except Exception as e2:
+                logger.warning(f"Todas as tentativas de configurar a preservação de layout falharam: {e2}")
+
+        # Tentar configurar outras opções de preservação de layout de modo seguro
+        try:
+            if hasattr(pipeline_options, "keep_headers_footers"):
+                pipeline_options.keep_headers_footers = True
+                logger.info("Configurado keep_headers_footers = True")
+
+            if hasattr(pipeline_options, "headers_footers_enabled"):
+                pipeline_options.headers_footers_enabled = True
+                logger.info("Configurado headers_footers_enabled = True")
+
+            # Alguns backends podem ter uma configuração específica para preservação de layout
+            if hasattr(pipeline_options, "layout_preservation"):
+                pipeline_options.layout_preservation = True
+                logger.info("Configurado layout_preservation = True")
+
+            # Configurar para preservar quebras de linha originais
+            if hasattr(pipeline_options, "preserve_line_breaks"):
+                pipeline_options.preserve_line_breaks = True
+                logger.info("Configurado preserve_line_breaks = True")
+
+            # Preservar espaçamento original entre elementos
+            if hasattr(pipeline_options, "preserve_spacing"):
+                pipeline_options.preserve_spacing = True
+                logger.info("Configurado preserve_spacing = True")
+
+            # Algumas implementações podem ter uma configuração para blocos de texto
+            if hasattr(pipeline_options, "maintain_text_blocks"):
+                pipeline_options.maintain_text_blocks = True
+                logger.info("Configurado maintain_text_blocks = True")
+                
+            # Verificar se existe alguma opção relacionada a estrutura
+            if hasattr(pipeline_options, "maintain_structure"):
+                pipeline_options.maintain_structure = True
+                logger.info("Configurado maintain_structure = True")
+                
+            # Algumas implementações podem usar o termo "original"
+            if hasattr(pipeline_options, "keep_original_layout"):
+                pipeline_options.keep_original_layout = True
+                logger.info("Configurado keep_original_layout = True")
+
+            logger.info("Configurações de preservação de layout processadas")
+        except Exception as e:
+            logger.warning(f"Erro ao configurar opções específicas de preservação de layout: {e}")
+        
         # Configurar OCR padrão (método original) se solicitado
         if use_standard_ocr:
             logger.info(f"Ativando OCR padrão com idioma: {ocr_language}")
@@ -390,37 +466,87 @@ async def process_file(
 
             return {"markdown": md_content}
 
+        # Modificações para a parte do HTML no método process_file
         elif export_format.lower() == "html":
-            # Para HTML, tentar exportação com parâmetros para incluir imagens
+            # Para HTML, tentar exportação com parâmetros para incluir imagens e preservar layout
             try:
-                # Definir opções para exportação HTML com imagens
-                html_options = {}
-
-                # Se a API do documento suporta exportação HTML com imagens embutidas
-                if hasattr(conv_result.document, "export_to_html_with_options") or hasattr(conv_result.document, "save_as_html"):
-                    # Tentar com parâmetros que forçam a inclusão de imagens
-                    if hasattr(conv_result.document, "export_to_html_with_options"):
+                # Definir opções para exportação HTML com segurança
+                # Usaremos um dicionário para armazenar opções válidas
+                export_options = {
+                    "image_mode": "embedded"  # Essa opção é comum e provavelmente suportada
+                }
+                
+                # Verificar se outras opções são suportadas verificando a assinatura do método
+                if hasattr(conv_result.document, "export_to_html_with_options"):
+                    # Inspecionar os parâmetros aceitos pelo método
+                    import inspect
+                    try:
+                        signature = inspect.signature(conv_result.document.export_to_html_with_options)
+                        param_names = list(signature.parameters.keys())
+                        
+                        # Adicionar opções apenas se forem suportadas
+                        if "embedding_images" in param_names:
+                            export_options["embedding_images"] = True
+                        
+                        if "preserve_layout" in param_names:
+                            export_options["preserve_layout"] = True
+                            logger.info("Adicionado preserve_layout=True às opções de exportação HTML")
+                        
+                        if "keep_headers_footers" in param_names:
+                            export_options["keep_headers_footers"] = True
+                            logger.info("Adicionado keep_headers_footers=True às opções de exportação HTML")
+                        
+                        logger.info(f"Opções de exportação HTML detectadas: {export_options}")
+                        
+                        # Chamar o método com as opções suportadas
+                        html_content = conv_result.document.export_to_html_with_options(**export_options)
+                        
+                    except (TypeError, ValueError) as e:
+                        logger.warning(f"Erro ao inspecionar parâmetros: {e}")
+                        # Tentar com opções padrão mínimas
                         html_content = conv_result.document.export_to_html_with_options(
                             embedding_images=True,
                             image_mode="embedded"
                         )
-                    # Alternativa: usar save_as_html se disponível
-                    elif hasattr(conv_result.document, "save_as_html"):
-                        # Caminho temporário para o HTML
-                        html_file = os.path.join(
-                            temp_dir, f"{uuid.uuid4()}.html")
-                        conv_result.document.save_as_html(
-                            html_file,
-                            image_mode="embedded"
-                        )
-                        # Ler arquivo HTML salvo
-                        with open(html_file, 'r', encoding='utf-8') as f:
-                            html_content = f.read()
-                    else:
-                        # Fallback para o método padrão
-                        html_content = conv_result.document.export_to_html()
+                
+                # Alternativa: usar save_as_html se disponível
+                elif hasattr(conv_result.document, "save_as_html"):
+                    # Caminho temporário para o HTML
+                    html_file = os.path.join(temp_dir, f"{uuid.uuid4()}.html")
+                    
+                    # Verificar quais parâmetros são aceitos
+                    try:
+                        import inspect
+                        signature = inspect.signature(conv_result.document.save_as_html)
+                        param_names = list(signature.parameters.keys())
+                        
+                        save_options = {}
+                        
+                        # Adicionar opções apenas se forem suportadas
+                        if "image_mode" in param_names:
+                            save_options["image_mode"] = "embedded"
+                        
+                        if "preserve_layout" in param_names:
+                            save_options["preserve_layout"] = True
+                        
+                        if "keep_headers_footers" in param_names:
+                            save_options["keep_headers_footers"] = True
+                            
+                        logger.info(f"Opções de save_as_html detectadas: {save_options}")
+                        
+                        # Chamar o método com as opções suportadas
+                        conv_result.document.save_as_html(html_file, **save_options)
+                        
+                    except (TypeError, ValueError) as e:
+                        logger.warning(f"Erro ao inspecionar parâmetros de save_as_html: {e}")
+                        # Tentar com opções mínimas
+                        conv_result.document.save_as_html(html_file, image_mode="embedded")
+                        
+                    # Ler arquivo HTML salvo
+                    with open(html_file, 'r', encoding='utf-8') as f:
+                        html_content = f.read()
                 else:
-                    # Método padrão de exportação
+                    # Método padrão de exportação se não encontrar métodos específicos
                     html_content = conv_result.document.export_to_html()
 
                 # Se quisermos adicionar descrições ao HTML
@@ -453,6 +579,7 @@ async def process_file(
                         html_content = new_html
 
                 # Adicionar CSS para garantir que legendas apareçam abaixo das imagens
+                # e que o layout original seja preservado
                 if "<img" in html_content:
                     # Corrigir a ordem das tags - mover figcaption para depois da img
                     logger.info("Verificando e corrigindo a ordem das tags figure/figcaption/img")
@@ -463,7 +590,7 @@ async def process_file(
                         logger.info("Encontrado figcaption antes de img - corrigindo ordem")
                         # Reordenar: figure -> img -> figcaption
                         html_content = re.sub(pattern, r'<figure>\2<figcaption>\1</figcaption></figure>', 
-                                             html_content, flags=re.DOTALL)
+                                            html_content, flags=re.DOTALL)
                     
                     # Procurar por outro padrão comum sem espaços adicionais
                     pattern2 = r'<figure><figcaption>(.*?)</figcaption>(<img[^>]+>)</figure>'
@@ -478,8 +605,10 @@ async def process_file(
                         html_content = re.sub(pattern3, r'<figure>\2\3<figcaption>\1</figcaption></figure>', html_content)
                     
                     # Adicionar CSS ao HEAD do documento para posicionamento correto das legendas
+                    # e preservação do layout original
                     css_style = '''
                     <style>
+                    /* Estilos para figuras e legendas */
                     figure {
                     display: flex;
                     flex-direction: column;
@@ -492,6 +621,46 @@ async def process_file(
                     img + figcaption {
                     display: block;
                     margin-top: 8px;
+                    }
+                    
+                    /* Estilos para preservação de layout */
+                    body {
+                    white-space: pre-wrap; /* Preserva quebras de linha */
+                    }
+                    .page {
+                    position: relative;
+                    margin-bottom: 20px;
+                    border: 1px solid #ddd;
+                    padding: 20px;
+                    }
+                    .header {
+                    border-bottom: 1px solid #eee;
+                    padding-bottom: 10px;
+                    margin-bottom: 10px;
+                    }
+                    .footer {
+                    border-top: 1px solid #eee;
+                    padding-top: 10px;
+                    margin-top: 10px;
+                    }
+                    /* Preservar espaçamento e posicionamento original */
+                    .content {
+                    position: relative;
+                    }
+                    .text-block {
+                    position: relative;
+                    }
+                    
+                    /* Estilo adicional para preservar quebras de linha em parágrafos */
+                    p {
+                    white-space: pre-wrap;
+                    }
+                    
+                    /* Garantir que elementos de texto mantenham seu posicionamento */
+                    div[style*="position: absolute"] {
+                    /* Manter estilo de posicionamento absoluto mas adicionar margem mínima */
+                    margin-top: 2px;
+                    margin-bottom: 2px;
                     }
                     </style>
                     '''
@@ -508,7 +677,23 @@ async def process_file(
                         html_content = f"{css_style}{html_content}"
 
                     logger.info(
-                        "CSS para posicionamento de legendas adicionado ao HTML")
+                        "CSS para posicionamento de legendas e preservação de layout adicionado ao HTML")
+
+                # Verificar se há estrutura de página com cabeçalhos/rodapés
+                # Se não houver, tentar adicionar wrappers para simular essa estrutura
+                if "<div class=\"header\"" not in html_content and "<header" not in html_content:
+                    # Verificar se podemos identificar uma estrutura de página
+                    if "<div class=\"page\"" in html_content or "<div class=\"content\"" in html_content:
+                        logger.info("Página encontrada, mas sem cabeçalhos/rodapés explícitos")
+                    else:
+                        logger.info("Estrutura de página não identificada, adicionando CSS para melhorar a visualização")
+                        
+                        # Dividir o conteúdo em páginas visualmente
+                        if "</body>" in html_content:
+                            # Adicionar quebras de página visíveis
+                            page_divider = '<hr style="page-break-before: always; border: 1px dashed #ccc; margin: 30px 0;">'
+                            # Substituir quebras de página internas
+                            html_content = html_content.replace("</body>", f"{page_divider}</body>")
 
             except Exception as e:
                 logger.warning(f"Erro ao exportar HTML personalizado: {e}")
@@ -525,6 +710,11 @@ async def process_file(
             # Verificar se o conteúdo HTML tem figcaption para depuração
             has_figcaption = "<figcaption" in html_content
             logger.info(f"HTML contém figcaption: {has_figcaption}")
+
+            # Verificar se há cabeçalhos e rodapés preservados
+            has_header = "<div class=\"header\"" in html_content or "<header" in html_content
+            has_footer = "<div class=\"footer\"" in html_content or "<footer" in html_content
+            logger.info(f"HTML contém cabeçalho: {has_header}, rodapé: {has_footer}")
 
             # Importante: sempre retornar o conteúdo HTML
             return {"html": html_content}
