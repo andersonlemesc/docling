@@ -16,6 +16,10 @@ import time
 import inspect
 import base64
 import re
+import traceback
+
+# Importação para o OCR aprimorado
+from app.enhanced_ocr import apply_enhanced_ocr
 
 app = FastAPI()
 logging.basicConfig(level=logging.INFO)
@@ -25,9 +29,11 @@ logger = logging.getLogger(__name__)
 async def process_file(
     file: UploadFile = File(...),
     ocr: bool = Query(False, description="Ativa OCR para leitura de imagens"),
+    enhanced_ocr: bool = Query(False, description="Ativa OCR aprimorado que processa cada imagem individualmente"),
     export_format: str = Query("markdown", description="Formato de exportação: markdown, html ou dict"),
     generate_images: bool = Query(False, description="Gera imagens em base64 para as páginas e figuras"),
     ocr_language: str = Query("pt", description="Idioma para OCR (ex: pt, en, fr, de)"),
+    ocr_min_confidence: float = Query(0.5, description="Confiança mínima para OCR (entre 0 e 1)"),
     describe_images: bool = Query(False, description="Adiciona descrições às imagens usando LLM"),
     image_description_prompt: str = Query("Descreva esta imagem em detalhes", description="Prompt para descrição de imagens"),
     include_image_data: bool = Query(False, description="Inclui imagens como base64 no markdown (se false, apenas placeholders)"),
@@ -59,12 +65,16 @@ async def process_file(
             
         logger.info(f"Arquivo '{file.filename}' salvo para processamento")
         
-        # Configurar opções de pipeline para PDF com configurações mais completas
+        # Verificar se devemos usar OCR aprimorado ou OCR padrão
+        use_enhanced_ocr = enhanced_ocr
+        use_standard_ocr = ocr and not enhanced_ocr
+        
+        # Configurar opções de pipeline para PDF
         pipeline_options = PdfPipelineOptions()
         
-        # Configurar OCR se solicitado
-        if ocr:
-            logger.info(f"Ativando OCR com idioma: {ocr_language}")
+        # Configurar OCR padrão (método original) se solicitado
+        if use_standard_ocr:
+            logger.info(f"Ativando OCR padrão com idioma: {ocr_language}")
             # Definir idioma do OCR
             pipeline_options.do_ocr = True
             
@@ -84,15 +94,16 @@ async def process_file(
                 
                 # Ajustar confiança mínima
                 if hasattr(pipeline_options.ocr_options, "min_confidence"):
-                    pipeline_options.ocr_options.min_confidence = 0.5
+                    pipeline_options.ocr_options.min_confidence = ocr_min_confidence
             except AttributeError as e:
                 logger.warning(f"Erro ao configurar opções específicas de OCR: {e}")
         else:
-            # Desativar OCR
+            # Desativar OCR padrão
             pipeline_options.do_ocr = False
         
         # Configuração para geração de imagens
-        if generate_images:
+        # Sempre geramos imagens se OCR aprimorado estiver ativado
+        if generate_images or use_enhanced_ocr:
             logger.info("Ativando geração de imagens")
             
             # Configurações básicas
@@ -186,7 +197,27 @@ async def process_file(
         # Verificar se o método iterate_items existe
         has_iterate_items = hasattr(conv_result.document, 'iterate_items')
         
-        # Exportar no formato solicitado com tratamento especial para incluir imagens
+        # Verificar se devemos aplicar OCR aprimorado após conversão
+        if use_enhanced_ocr and export_format.lower() == "markdown":
+            logger.info(f"Aplicando OCR aprimorado com idioma: {ocr_language}")
+            try:
+                md_content = apply_enhanced_ocr(
+                    conv_result, 
+                    temp_dir, 
+                    ocr_language=ocr_language,
+                    min_confidence=ocr_min_confidence,
+                    include_image_data=include_image_data  # Passa o parâmetro correto
+                )
+                
+                logger.info("OCR aprimorado aplicado com sucesso")
+                return {"markdown": md_content}
+            except Exception as e:
+                logger.error(f"Erro ao aplicar OCR aprimorado: {e}")
+                logger.error(traceback.format_exc())
+                # Em caso de falha no OCR aprimorado, continuar com o fluxo normal
+                logger.warning("Continuando com o fluxo normal de processamento após falha no OCR aprimorado")
+        
+        # Caso contrário, seguir com o fluxo normal para cada formato solicitado
         if export_format.lower() == "markdown":
             md_content = None
             
@@ -371,6 +402,14 @@ async def process_file(
                     
                     dict_content["_debug"]["imagesWithDescriptions"] = image_desc_count
                     dict_content["_debug"]["descriptionProvider"] = llm_provider
+                
+                # Adicionar informações sobre OCR aprimorado
+                if use_enhanced_ocr:
+                    dict_content["_debug"]["enhancedOCR"] = {
+                        "enabled": True,
+                        "language": ocr_language,
+                        "minConfidence": ocr_min_confidence
+                    }
             
             return dict_content
             
@@ -388,7 +427,7 @@ async def process_file(
             status_code=500,
             content={"error": f"Erro ao processar o arquivo: {str(e)}"}
         )
-    
+
     finally:
         # Limpar arquivos temporários de forma segura
         try:
