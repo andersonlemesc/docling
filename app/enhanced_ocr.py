@@ -5,6 +5,9 @@ import re
 from PIL import Image
 import numpy as np
 import logging
+import os
+import uuid
+import traceback
 
 # Configuração do logger
 logger = logging.getLogger(__name__)
@@ -152,11 +155,8 @@ def apply_enhanced_ocr(conv_result, temp_dir, ocr_language="pt", min_confidence=
     Returns:
         str: Conteúdo markdown com transcrições OCR
     """
-    import os
-    import uuid
-    
     try:
-        logger.info("Iniciando processamento de OCR aprimorado")
+        logger.info("Iniciando processamento de OCR aprimorado para markdown")
         
         # Criar instância do processador OCR
         ocr_processor = EnhancedOCR(languages=[ocr_language])
@@ -273,7 +273,64 @@ def apply_enhanced_ocr(conv_result, temp_dir, ocr_language="pt", min_confidence=
         
     except Exception as e:
         logger.error(f"Erro ao aplicar OCR aprimorado: {e}")
-        import traceback
         logger.error(traceback.format_exc())
         # Fallback: retornar markdown original sem OCR
         return conv_result.document.export_to_markdown()
+
+def process_document_with_ocr(conv_result, temp_dir, ocr_language="pt", min_confidence=0.5, include_image_data=True):
+    """
+    Processa o documento com OCR aprimorado, aplicando transcrições às imagens 
+    mas sem retornar um formato específico - apenas processa o documento
+    
+    Args:
+        conv_result: Resultado da conversão do documento
+        temp_dir: Diretório temporário
+        ocr_language: Idioma para OCR
+        min_confidence: Confiança mínima para OCR
+        include_image_data: Se True, mantém as imagens em base64 
+        
+    Returns:
+        None: Apenas processa o documento sem retornar um formato específico
+    """
+    try:
+        logger.info("Processando documento com OCR aprimorado (sem retornar formato específico)")
+        
+        # Criar instância do processador OCR
+        ocr_processor = EnhancedOCR(languages=[ocr_language])
+        
+        # Para processamento OCR, sempre precisamos das imagens
+        logger.info("Extraindo imagens para processamento OCR")
+        temp_md_file_with_images = os.path.join(temp_dir, f"temp_ocr_with_images_{uuid.uuid4()}.md")
+        conv_result.document.save_as_markdown(
+            temp_md_file_with_images,
+            image_mode="embedded"
+        )
+        
+        # Ler o conteúdo do arquivo com imagens
+        with open(temp_md_file_with_images, 'r', encoding='utf-8') as f:
+            md_content_with_images = f.read()
+        
+        # Coletar resultados OCR para todas as imagens
+        ocr_results = collect_images_and_ocr_results(
+            md_content_with_images, 
+            ocr_processor, 
+            min_confidence
+        )
+        
+        logger.info(f"Coletados {len(ocr_results)} resultados OCR")
+        
+        # Apenas log dos resultados, sem manipular o documento
+        for i, result in enumerate(ocr_results):
+            if result and result != "[Nenhum texto detectado na imagem]":
+                short_text = result[:30] + "..." if len(result) > 30 else result
+                logger.info(f"Imagem {i+1}: '{short_text}'")
+            else:
+                logger.info(f"Imagem {i+1}: Sem texto detectado")
+        
+        # Não retornamos nenhum formato específico
+        return None
+        
+    except Exception as e:
+        logger.error(f"Erro ao processar documento com OCR aprimorado: {e}")
+        logger.error(traceback.format_exc())
+        return None
