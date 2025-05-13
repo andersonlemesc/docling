@@ -30,7 +30,39 @@ import traceback
 # Importação para o OCR aprimorado
 from app.enhanced_ocr import apply_enhanced_ocr, process_document_with_ocr
 
+# Configurar FastAPI com timeout aumentado
 app = FastAPI()
+
+# Configurar timeout para o FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+import asyncio
+
+class TimeoutMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        try:
+            # Aumentar o timeout para 3600 segundos (1 hora)
+            logger.info(f"Processando requisição com timeout de 3600 segundos (1 hora): {request.url}")
+            start_time = time.time()
+            response = await asyncio.wait_for(call_next(request), timeout=3600)
+            process_time = time.time() - start_time
+            logger.info(f"Requisição processada em {process_time:.2f} segundos: {request.url}")
+            return response
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout excedido (3600s) ao processar requisição: {request.url}")
+            return JSONResponse(
+                status_code=504,
+                content={"detail": "O processamento da requisição excedeu o limite de 1 hora (3600 segundos)"}
+            )
+        except Exception as exc:
+            logger.error(f"Erro ao processar requisição: {request.url} - {str(exc)}")
+            return JSONResponse(
+                status_code=500,
+                content={"detail": f"Erro interno do servidor: {str(exc)}"}
+            )
+
+app.add_middleware(TimeoutMiddleware)
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
